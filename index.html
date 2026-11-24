@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="theme-color" content="#f8f8f8" />
+<title>Multi-Map App mit Modal</title>
+<style>
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #fff;
+  overflow: hidden;
+}
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+}
+#map-container {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+.map { width: 100%; height: 100%; position: absolute; inset: 0; display: none; }
+.map.active { display: block; }
+svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.country { fill: #fff; stroke: #000; stroke-width: 0.4px; cursor: pointer; }
+.country:hover { stroke-width: 1px; fill: #f0f0f0; }
+
+/* Kartenwahl: auch auf schmalen Displays und per Touch gut bedienbar */
+#map-selector {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid #ccc;
+  background: #f8f8f8;
+}
+#map-selector button {
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid #999;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  touch-action: manipulation;
+  -webkit-appearance: none;
+  appearance: none;
+}
+#map-selector button.active { background: #ddd; font-weight: bold; }
+
+/* Länder-Popup */
+#popup {
+  position: fixed;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+  padding: 16px;
+  width: min(280px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  z-index: 2000;
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+#popup h3 { margin: 0; padding-right: 24px; font-size: 16px; }
+#popup .close {
+  position: absolute; right: 10px; top: 8px;
+  cursor: pointer; font-weight: bold; font-size: 22px;
+  min-width: 32px; min-height: 32px; text-align: center;
+}
+.color-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.color-btn {
+  width: 44px; height: 44px; border-radius: 6px;
+  border: 1px solid #999; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  touch-action: manipulation;
+}
+.reset { flex: 1; min-width: 80px; font-size: 14px; background: #fff; }
+.clear-all {
+  min-height: 44px; background: #eee; border: 1px solid #999;
+  border-radius: 6px; padding: 8px 10px; cursor: pointer;
+  font: inherit; font-size: 14px; touch-action: manipulation;
+}
+
+/* Bestätigungsfenster */
+#modal-overlay {
+  position: fixed; inset: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.4); display: none; z-index: 3000;
+  align-items: center; justify-content: center;
+  padding: 16px;
+}
+#modal-box {
+  background: #fff; padding: 20px 18px; border-radius: 8px;
+  max-width: 360px; width: 100%;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.3); text-align: center;
+}
+#modal-box p { margin: 0 0 20px; font-size: 16px; }
+#modal-box button {
+  margin: 4px 6px; min-height: 44px; padding: 8px 16px;
+  font: inherit; font-size: 14px; border-radius: 6px;
+  border: 1px solid #999; cursor: pointer; touch-action: manipulation;
+}
+#modal-box button.confirm { background: #e74c3c; color: #fff; border: none; }
+#modal-box button.cancel { background: #fff; color: #333; }
+
+@media (max-width: 600px) {
+  #map-selector { gap: 6px; padding-left: 6px; padding-right: 6px; }
+  #map-selector button { flex: 1 1 auto; padding: 8px 9px; font-size: 13px; }
+}
+</style>
+</head>
+<body>
+
+<div id="map-container">
+  <div class="map" id="map1"></div>
+  <div class="map" id="map2"></div>
+  <div class="map" id="map3"></div>
+  <div class="map" id="map4"></div>
+</div>
+
+<div id="map-selector">
+  <button data-map="map1" class="active">Karte 1</button>
+  <button data-map="map2">Karte 2</button>
+  <button data-map="map3">Karte 3</button>
+  <button data-map="map4">Karte 4</button>
+  <button id="resetCurrent">Aktuelle Karte löschen</button>
+  <button id="resetAll">Alle Karten löschen</button>
+</div>
+
+<!-- Popup für Länderfarben -->
+<div id="popup">
+  <div class="close" id="closeBtn">×</div>
+  <h3 id="countryName"></h3>
+  <div class="color-row">
+    <div class="color-btn" id="btnGreen" style="background:#2ecc71" title="Grün"></div>
+    <div class="color-btn" id="btnYellow" style="background:#f1c40f" title="Gelb"></div>
+    <div class="color-btn" id="btnRed" style="background:#e74c3c" title="Rot"></div>
+    <button class="color-btn reset" id="btnReset">Zurück</button>
+  </div>
+  <button class="clear-all" id="btnClearAll">Alles zurücksetzen</button>
+</div>
+
+<!-- MODAL -->
+<div id="modal-overlay">
+  <div id="modal-box">
+    <p id="modal-text">Bist du sicher?</p>
+    <button class="confirm" id="modal-yes">Ja</button>
+    <button class="cancel" id="modal-no">Nein</button>
+  </div>
+</div>
+
+<!-- D3 + TopoJSON -->
+<script src="https://unpkg.com/d3@7/dist/d3.min.js"></script>
+<script src="https://unpkg.com/topojson-client@3/dist/topojson-client.min.js"></script>
+
+<script>
+(function(){
+const popup = document.getElementById('popup');
+const countryNameEl = document.getElementById('countryName');
+const closeBtn = document.getElementById('closeBtn');
+const btnGreen = document.getElementById('btnGreen');
+const btnYellow = document.getElementById('btnYellow');
+const btnRed = document.getElementById('btnRed');
+const btnReset = document.getElementById('btnReset');
+const btnClearAll = document.getElementById('btnClearAll');
+const resetAllBtn = document.getElementById('resetAll');
+const resetCurrentBtn = document.getElementById('resetCurrent');
+
+// Modal
+const modalOverlay = document.getElementById('modal-overlay');
+const modalText = document.getElementById('modal-text');
+const modalYes = document.getElementById('modal-yes');
+const modalNo = document.getElementById('modal-no');
+
+let currentCountry = null;
+let currentIso = null;
+let currentMapId = "map1";
+let colorMaps = {}; 
+
+function storageKey(mapId){ return "map-country-colors-"+mapId; }
+function loadColors(mapId){ return JSON.parse(localStorage.getItem(storageKey(mapId))||"{}"); }
+function saveColors(mapId){ localStorage.setItem(storageKey(mapId), JSON.stringify(colorMaps[mapId])); }
+
+function openPopup(name, iso, countrySelection, x, y){
+  currentCountry = countrySelection;
+  currentIso = iso;
+  countryNameEl.textContent = name||"Unbekannt";
+  popup.style.display = 'flex';
+  // Positionierung innerhalb des sichtbaren iPhone-/iPad-Bildschirms halten.
+  popup.style.left = '12px';
+  popup.style.top = '12px';
+  requestAnimationFrame(() => {
+    const rect = popup.getBoundingClientRect();
+    const margin = 12;
+    const left = Math.max(margin, Math.min(x + 10, window.innerWidth - rect.width - margin));
+    const top = Math.max(margin, Math.min(y + 10, window.innerHeight - rect.height - margin));
+    popup.style.left = left + 'px';
+    popup.style.top = top + 'px';
+  });
+}
+function closePopup(){ popup.style.display='none'; currentCountry=null; currentIso=null; }
+
+closeBtn.onclick = closePopup;
+
+function setColor(color){
+  if(!currentCountry||!currentIso) return;
+  currentCountry.style('fill', color||'#fff');
+  if(color) colorMaps[currentMapId][currentIso]=color;
+  else delete colorMaps[currentMapId][currentIso];
+  saveColors(currentMapId);
+  closePopup();
+}
+
+btnGreen.onclick = ()=>setColor('#2ecc71');
+btnYellow.onclick = ()=>setColor('#f1c40f');
+btnRed.onclick = ()=>setColor('#e74c3c');
+btnReset.onclick = ()=>setColor(null);
+btnClearAll.onclick = ()=>{ resetMap(currentMapId); }
+
+// --- Modal-Funktion ---
+function showModal(text, onYes){
+  modalText.textContent=text;
+  modalOverlay.style.display='flex';
+  modalYes.onclick = ()=>{
+    modalOverlay.style.display='none';
+    onYes();
+  };
+  modalNo.onclick = ()=>{ modalOverlay.style.display='none'; };
+}
+
+// Karten zurücksetzen
+function resetMap(mapId){
+  colorMaps[mapId]={};
+  saveColors(mapId);
+  d3.select("#"+mapId).selectAll(".country").style("fill", d=>{
+    const iso = d.properties?.iso_a3 || d.id;
+    return (iso==="ATA"||d.id==="010") ? "#e6e6e6" : "#fff";
+  });
+  closePopup();
+}
+
+// Reset Current
+resetCurrentBtn.onclick = ()=>{
+  showModal("Bist du sicher, dass du die aktuelle Karte löschen möchtest?", ()=>resetMap(currentMapId));
+}
+
+// Reset All
+resetAllBtn.onclick = ()=>{
+  showModal("Bist du sicher, dass du ALLE Karten löschen möchtest?", ()=>{
+    ["map1","map2","map3","map4"].forEach(m=>{
+      colorMaps[m]={};
+      localStorage.removeItem(storageKey(m));
+      d3.select("#"+m).selectAll(".country").style("fill", d=>{
+        const iso = d.properties?.iso_a3||d.id;
+        return (iso==="ATA"||d.id==="010") ? "#e6e6e6":"#fff";
+      });
+    });
+    closePopup();
+  });
+}
+
+// Karten rendern
+function renderMap(mapId){
+  const container=d3.select("#"+mapId);
+  // Die Karte richtet sich nach dem tatsächlichen Kartenbereich aus,
+  // nicht nach einer fest angenommenen Bildschirmhöhe.
+  const width = Math.max(1, document.getElementById("map-container").clientWidth);
+  const height = Math.max(1, document.getElementById("map-container").clientHeight);
+
+  const svg=container.append("svg").attr("viewBox",`0 0 ${width} ${height}`).attr("preserveAspectRatio","xMidYMid meet");
+  const projection=d3.geoMercator().scale(width/(2*Math.PI)).translate([width/2,height/1.8]);
+  const path=d3.geoPath().projection(projection);
+  colorMaps[mapId]=loadColors(mapId);
+
+  d3.json("https://unpkg.com/world-atlas@2/countries-110m.json").then(world=>{
+    const countries=topojson.feature(world, world.objects.countries).features;
+    svg.append("g").selectAll("path")
+      .data(countries)
+      .join("path")
+      .attr("class","country")
+      .attr("d",path)
+      .each(function(d){
+        const iso=d.properties?.iso_a3||d.id;
+        if((iso==="ATA"||d.id==="010")&&!colorMaps[mapId][iso]) d3.select(this).style("fill","#e6e6e6");
+        else if(colorMaps[mapId][iso]) d3.select(this).style("fill",colorMaps[mapId][iso]);
+      })
+      .on("click",function(event,d){
+        event.stopPropagation();
+        const iso=d.properties?.iso_a3||d.id;
+        const name=d.properties?.name||d.properties?.NAME||"Unbekannt";
+        openPopup(name,iso,d3.select(this),event.clientX,event.clientY);
+      });
+
+    svg.call(d3.zoom().scaleExtent([1,8]).on("zoom",e=>svg.select("g").attr("transform",e.transform)));
+  });
+}
+
+// 4 Karten vorbereiten
+const mapIds = ["map1","map2","map3","map4"];
+mapIds.forEach(renderMap);
+
+// Bei Drehung oder Größenänderung (iPad/iPhone) Karten neu anpassen.
+let resizeTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    closePopup();
+    mapIds.forEach(id => {
+      d3.select("#" + id).selectAll("*").remove();
+      renderMap(id);
+    });
+  }, 150);
+});
+
+// Umschalten
+const buttons=document.querySelectorAll("#map-selector button[data-map]");
+function activateMap(mapId){
+  currentMapId=mapId;
+  document.querySelectorAll(".map").forEach(m=>m.classList.remove("active"));
+  document.getElementById(mapId).classList.add("active");
+  buttons.forEach(b=>b.classList.remove("active"));
+  document.querySelector(`#map-selector button[data-map="${mapId}"]`).classList.add("active");
+  closePopup();
+}
+buttons.forEach(btn=>{ btn.addEventListener("click",()=>activateMap(btn.dataset.map)); });
+activateMap("map1");
+
+})();
+</script>
+</body>
+</html>
